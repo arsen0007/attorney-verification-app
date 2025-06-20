@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attorney Verification Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;70M0&display=swap');
+        .log-container { height: 300px; }
+        .table-container { max-height: 400px; }
+        #file-drop-zone {
+            border: 2px dashed #cbd5e1;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+        #file-drop-zone.dragover {
+            border-color: #2563eb;
+            background-color: #eff6ff;
+        }
+        /* Custom scrollbar for better aesthetics */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-7xl">
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-slate-900">Attorney Verification Tool</h1>
+            <p class="text-slate-500 mt-2">Upload a CSV file to automatically verify attorney status on the CalBar website.</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Left Column: Controls and Log -->
+            <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                <h2 class="text-2xl font-semibold mb-4 text-slate-900">1. Upload File</h2>
+                
+                <!-- File Upload Area -->
+                <div id="file-drop-zone" class="p-6 text-center rounded-lg cursor-pointer">
+                    <input type="file" id="csv-file-input" class="hidden" accept=".csv">
+                    <svg class="mx-auto h-12 w-12 text-slate-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true"><path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    <p id="file-name-display" class="mt-2 text-sm text-slate-600">
+                        <span class="font-semibold text-blue-600">Click to upload</span> or drag and drop a CSV file.
+                    </p>
+                    <p class="text-xs text-slate-500 mt-1">Headers: First Name, Last Name, Primary Pr Email, Primary Practice Name</p>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="mt-6 flex space-x-4">
+                    <button id="start-btn" class="flex-1 bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg shadow-sm hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors" disabled>
+                        Start Verification
+                    </button>
+                    <button id="stop-btn" class="flex-1 bg-red-600 text-white font-semibold py-3 px-4 rounded-lg shadow-sm hover:bg-red-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors" disabled>
+                        Stop Process
+                    </button>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="mt-6">
+                    <div class="w-full bg-slate-200 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-text" class="text-center text-sm text-slate-500 mt-2">Waiting to start...</p>
+                </div>
+
+                <!-- Log -->
+                <h3 class="text-xl font-semibold mt-8 mb-2 text-slate-900">Activity Log</h3>
+                <div id="log-container" class="log-container custom-scrollbar bg-slate-100 p-4 rounded-lg border border-slate-200 text-sm font-mono overflow-y-auto">
+                    <p class="text-slate-500">Log messages will appear here...</p>
+                </div>
+            </div>
+
+            <!-- Right Column: Results Table -->
+            <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-semibold text-slate-900">2. View Results</h2>
+                    <button id="download-btn" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-sm hover:bg-green-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-colors" disabled>
+                        Download Results
+                    </button>
+                </div>
+                <div class="table-container custom-scrollbar overflow-auto">
+                    <table class="w-full text-sm text-left">
+                        <thead class="text-xs text-slate-700 uppercase bg-slate-100 sticky top-0">
+                            <tr>
+                                <th scope="col" class="px-4 py-3">Name</th>
+                                <th scope="col" class="px-4 py-3">Status</th>
+                                <th scope="col" class="px-4 py-3">Discipline</th>
+                                <th scope="col" class="px-4 py-3">Firm Match</th>
+                                <th scope="col" class="px-4 py-3">Profile Link</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-table-body">
+                           <tr class="border-b border-slate-200"><td colspan="5" class="px-4 py-8 text-center text-slate-500">Results will be displayed here.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('csv-file-input');
+        const fileDropZone = document.getElementById('file-drop-zone');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const logContainer = document.getElementById('log-container');
+        const resultsTableBody = document.getElementById('results-table-body');
+        
+        let statusInterval;
+
+        // --- File Handling ---
+        fileDropZone.addEventListener('click', () => fileInput.click());
+        fileDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropZone.classList.add('dragover');
+        });
+        fileDropZone.addEventListener('dragleave', () => fileDropZone.classList.remove('dragover'));
+        fileDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileDropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (file && file.name.endsWith('.csv')) {
+                fileNameDisplay.innerHTML = `<span class="font-semibold text-slate-800">${file.name}</span>`;
+                startBtn.disabled = false;
+            } else {
+                fileNameDisplay.innerHTML = `<span class="font-semibold text-red-600">Invalid file. Please select a .csv file.</span>`;
+                startBtn.disabled = true;
+            }
+        }
+
+        // --- API Communication ---
+        startBtn.addEventListener('click', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/start', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (response.ok) {
+                    setUiRunningState(true);
+                    statusInterval = setInterval(getStatus, 1000); // Poll every second
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        });
+
+        stopBtn.addEventListener('click', async () => {
+            if (!confirm("Are you sure you want to stop the process?")) return;
+            try {
+                await fetch('/stop', { method: 'POST' });
+                // The getStatus interval will handle the rest
+            } catch (error) {
+                alert(`Network error: ${error.message}`);
+            }
+        });
+
+        async function getStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                updateUI(data);
+
+                if (!data.is_running) {
+                    clearInterval(statusInterval);
+                    setUiRunningState(false);
+                }
+            } catch (error) {
+                console.error("Failed to get status:", error);
+                logMessage("Error: Could not connect to the backend server. Stopping updates.", 'error');
+                clearInterval(statusInterval);
+                setUiRunningState(false);
+            }
+        }
+        
+        // --- UI Updates ---
+        function setUiRunningState(isRunning) {
+            startBtn.disabled = isRunning;
+            stopBtn.disabled = !isRunning;
+            fileInput.disabled = isRunning;
+            downloadBtn.disabled = isRunning || resultsTableBody.children.length === 0;
+        }
+        
+        let lastLogLength = 0;
+        function updateUI(status) {
+            // Update progress bar
+            const percent = status.total > 0 ? (status.progress / status.total) * 100 : 0;
+            progressBar.style.width = `${percent}%`;
+            progressText.textContent = `Processing ${status.progress} of ${status.total}...`;
+            if (!status.is_running && status.total > 0) {
+                 progressText.textContent = `Process Finished. Verified ${status.total} records.`;
+            }
+
+            // Update log
+            if (status.log.length > lastLogLength) {
+                if(lastLogLength === 0) logContainer.innerHTML = ''; // Clear initial message
+                const newLogs = status.log.slice(lastLogLength);
+                newLogs.forEach(msg => logMessage(msg));
+                lastLogLength = status.log.length;
+            }
+
+            // Update results table
+            resultsTableBody.innerHTML = ''; // Full redraw for simplicity
+            if (status.results.length === 0) {
+                 resultsTableBody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-slate-500">No results to display yet.</td></tr>';
+            } else {
+                status.results.forEach(res => {
+                    const row = document.createElement('tr');
+                    row.className = 'border-b border-slate-200 bg-white hover:bg-slate-50';
+                    row.innerHTML = `
+                        <td class="px-4 py-3 font-medium">${res.Name}</td>
+                        <td class="px-4 py-3">${renderStatus(res['Verified Status'])}</td>
+                        <td class="px-4 py-3">${renderDiscipline(res['Discipline Found'])}</td>
+                        <td class="px-4 py-3">${res['Firmname match']}</td>
+                        <td class="px-4 py-3">${renderLink(res['Profile Link'])}</td>
+                    `;
+                    resultsTableBody.appendChild(row);
+                });
+                downloadBtn.disabled = false;
+            }
+        }
+        
+        function logMessage(message, type = 'info') {
+             const p = document.createElement('p');
+             if(message.includes('ERROR')) type = 'error';
+             if(message.includes('Match FOUND')) type = 'success';
+             
+             let color = 'text-slate-600';
+             if (type === 'error') color = 'text-red-600';
+             if (type === 'success') color = 'text-green-600';
+
+             p.className = color;
+             p.textContent = message;
+             logContainer.appendChild(p);
+             logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function renderStatus(status) {
+            if (status.toLowerCase().includes('active')) {
+                return `<span class="bg-green-100 text-green-800 text-xs font-medium mr-2 px-2.5 py-0.5 rounded-full">${status}</span>`;
+            }
+            if (status.toLowerCase().includes('not found') || status.toLowerCase().includes('error')) {
+                return `<span class="bg-red-100 text-red-800 text-xs font-medium mr-2 px-2.5 py-0.5 rounded-full">${status}</span>`;
+            }
+            return `<span class="bg-yellow-100 text-yellow-800 text-xs font-medium mr-2 px-2.5 py-0.5 rounded-full">${status}</span>`;
+        }
+
+        function renderDiscipline(discipline) {
+             if (discipline.toLowerCase() === 'yes') {
+                return `<span class="font-bold text-red-600">${discipline}</span>`;
+             }
+             return discipline;
+        }
+        
+        function renderLink(link) {
+            if (link === 'Not Found' || !link.startsWith('http')) {
+                return 'N/A';
+            }
+            return `<a href="${link}" target="_blank" class="text-blue-600 hover:underline">View Profile</a>`;
+        }
+
+        // --- Download Handler ---
+        downloadBtn.addEventListener('click', async () => {
+            // We can re-fetch the final state to be sure we have everything
+            const response = await fetch('/status');
+            const data = await response.json();
+            const results = data.results;
+
+            if (results.length === 0) {
+                alert("No results to download.");
+                return;
+            }
+            
+            const headers = Object.keys(results[0]);
+            let csvContent = headers.join(",") + "\n";
+
+            results.forEach(row => {
+                const values = headers.map(header => {
+                    let cell = row[header] ? row[header].toString() : '';
+                    cell = cell.replace(/"/g, '""'); // Escape double quotes
+                    if (cell.includes(',')) {
+                        cell = `"${cell}"`; // Enclose in quotes if it contains a comma
+                    }
+                    return cell;
+                });
+                csvContent += values.join(",") + "\n";
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", "Verification_Results.csv");
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+    </script>
+</body>
+</html>
