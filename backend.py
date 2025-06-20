@@ -1,8 +1,8 @@
 # ==============================================================================
-# ATTORNEY VERIFICATION WEB APP - PRODUCTION BACKEND (V2.0)
+# ATTORNEY VERIFICATION WEB APP - PRODUCTION BACKEND (V21 LOGIC)
 # ==============================================================================
-# This Flask server is optimized for deployment on a platform like Render.
-# It runs Selenium in headless mode and is packaged with a Dockerfile.
+# This is the definitive backend, updated with the final, most robust "two-pass"
+# and lenient "confidence score" matching logic for maximum accuracy.
 #
 # Author: Gemini
 # Date: June 20, 2025
@@ -23,28 +23,83 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 app = Flask(__name__)
 
+# --- Global State Management ---
 status = {
-    'is_running': False,
-    'progress': 0,
-    'total': 0,
-    'log': [],
-    'results': []
+    'is_running': False, 'progress': 0, 'total': 0,
+    'log': [], 'results': []
 }
 
+# --- Core Logic Functions (from our final local script) ---
+
+def setup_driver():
+    """Initializes a headless Selenium WebDriver for the server."""
+    try:
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        service = ChromeService()
+        driver = webdriver.Chrome(service=service, options=options)
+        return driver
+    except Exception as e:
+        status['log'].append(f"CRITICAL DRIVER ERROR: {e}")
+        return None
+
+def clean_name_for_search(first_name, last_name):
+    clean_first = re.split(r'[.\s]', str(first_name))[0]
+    clean_last = re.split(r'[.\s]', str(last_name))[-1]
+    return f"{clean_first} {clean_last}"
+
+def get_name_parts_for_matching(first_name, last_name):
+    clean_first = re.split(r'[.\s]', str(first_name))[0].lower()
+    clean_last = re.split(r'[.\s]', str(last_name))[-1].lower()
+    return clean_first, clean_last
+
+def get_match_confidence(first_name_part, last_name_part, csv_email, page_text):
+    confidence = {
+        "Email Matched (Exact)": "No", "Lastname in Email": "No", "Firstname in Email": "No",
+        "Lastname in Website": "No", "Firstname in Website": "No",
+    }
+    page_emails = re.findall(r'[\w\.-]+@[\w\.-]+', page_text)
+    website_match = re.search(r'Website:\s*<a[^>]*>([^<]+)</a>', page_text, re.IGNORECASE) or \
+                    re.search(r'Website:\s*(\S+)', page_text, re.IGNORECASE)
+    page_website = website_match.group(1).lower() if website_match else None
+
+    csv_email_handle = csv_email.split('@')[0] if '@' in csv_email else None
+    if csv_email_handle:
+        for email in page_emails:
+            if email.split('@')[0] == csv_email_handle:
+                confidence["Email Matched (Exact)"] = "Yes"
+                confidence["Lastname in Email"] = "Yes"
+                confidence["Firstname in Email"] = "Yes"
+                return True, confidence
+
+    for email in page_emails:
+        if last_name_part in email: confidence["Lastname in Email"] = "Yes"
+        if first_name_part[:3] in email: confidence["Firstname in Email"] = "Yes"
+    if page_website:
+        if last_name_part in page_website: confidence["Lastname in Website"] = "Yes"
+        if first_name_part[:3] in page_website: confidence["Firstname in Website"] = "Yes"
+
+    match_score = sum(1 for v in confidence.values() if v == "Yes")
+    return match_score >= 2, confidence
+
 def run_verification_process(filepath):
+    """The main Selenium scraping and processing logic."""
     global status
     try:
         df = pd.read_csv(filepath)
         required_cols = ['First Name', 'Last Name', 'Primary Pr Email', 'Primary Practice Name']
         if not all(col in df.columns for col in required_cols):
-            raise ValueError(f"CSV is missing required columns. Please ensure it has headers: {', '.join(required_cols)}")
+            raise ValueError(f"CSV is missing required headers.")
 
         status['total'] = len(df)
-        status['log'].append(f"Found {status['total']} attorneys to verify.")
-        
         driver = setup_driver()
         if not driver:
-            raise Exception("Could not initialize the Chrome web driver on the server.")
+            raise Exception("Could not initialize web driver on server.")
 
         for index, row in df.iterrows():
             if not status['is_running']:
@@ -52,22 +107,19 @@ def run_verification_process(filepath):
                 break
 
             status['progress'] = index + 1
-            first_name = row.get('First Name', '').strip()
-            last_name = row.get('Last Name', '').strip()
-            full_name_cleaned = clean_name(first_name, last_name)
+            first_name, last_name = row.get('First Name', ''), row.get('Last Name', '')
+            full_name_cleaned = clean_name_for_search(first_name, last_name)
+            first_name_match, last_name_match = get_name_parts_for_matching(first_name, last_name)
             original_name = f"{first_name} {last_name}"
-            csv_email = row.get('Primary Pr Email', '').strip().lower()
-            csv_firm_name = row.get('Primary Practice Name', '').strip().lower()
+            csv_email = str(row.get('Primary Pr Email', '')).strip().lower()
 
             status['log'].append(f"Processing {index + 1}/{status['total']}: {original_name}")
 
             result_data = {
-                'Name': original_name,
-                'Email': row.get('Primary Pr Email', ''),
-                'Firm Name': row.get('Primary Practice Name', ''),
-                'Verified Status': 'Error Processing',
-                'Discipline Found': 'Error Processing',
-                'Firmname match': 'No',
+                'Name': original_name, 'Email (from CSV)': row.get('Primary Pr Email', ''),
+                'Firm Name (from CSV)': row.get('Primary Practice Name', ''), 'Verified Status': 'Error Processing',
+                'Discipline Found': 'Not Checked', 'Email Matched (Exact)': 'No', 'Lastname in Email': 'No',
+                'Firstname in Email': 'No', 'Lastname in Website': 'No', 'Firstname in Website': 'No',
                 'Profile Link': 'Not Found'
             }
 
@@ -79,48 +131,42 @@ def run_verification_process(filepath):
                 search_box.send_keys(full_name_cleaned)
                 search_button = wait.until(EC.element_to_be_clickable((By.ID, "btn_quicksearch")))
                 search_button.click()
+                time.sleep(1.5)
 
                 try:
-                    wait.until(EC.visibility_of_element_located((By.ID, "tblAttorney")))
-                except TimeoutException:
-                    if "No results found" in driver.page_source:
+                    no_results_span = driver.find_element(By.CLASS_NAME, "attSearchRes")
+                    if "returned no results" in no_results_span.text:
                         result_data['Verified Status'] = 'Not Found on CalBar'
                         status['results'].append(result_data)
                         continue
-                    else:
-                        raise TimeoutException("Search failed: Page did not return known results.")
-
-                active_profile_links = []
-                result_rows = driver.find_elements(By.XPATH, "//table[@id='tblAttorney']/tbody/tr")
-                for r in result_rows:
-                    if r.find_element(By.XPATH, "./td[2]").text.strip().lower() == 'active':
-                        active_profile_links.append(r.find_element(By.XPATH, "./td[1]/a").get_attribute('href'))
+                except NoSuchElementException: pass
                 
-                if not active_profile_links:
-                    result_data['Verified Status'] = 'No Active Match Found'
-                    status['results'].append(result_data)
-                    continue
-
+                # PASS 1: Determine Status and collect links
+                all_profile_links = []
+                overall_status = "Not Found"
+                wait.until(EC.visibility_of_element_located((By.ID, "tblAttorney")))
+                result_rows = driver.find_elements(By.XPATH, "//table[@id='tblAttorney']/tbody/tr")
+                statuses = [r.find_element(By.XPATH, "./td[2]").text.strip() for r in result_rows]
+                all_profile_links = [r.find_element(By.XPATH, "./td[1]/a").get_attribute('href') for r in result_rows]
+                
+                if any(s.lower() == 'active' for s in statuses): overall_status = 'Active'
+                elif statuses: overall_status = statuses[0]
+                
+                result_data['Verified Status'] = overall_status
+                status['log'].append(f" -> Status determined as: {overall_status}")
+                
+                # PASS 2: Find first confident match
                 match_found = False
-                for link in active_profile_links:
+                for link in all_profile_links:
                     driver.get(link)
                     time.sleep(1)
-                    
-                    page_text_lower = driver.find_element(By.TAG_NAME, 'body').text.lower()
-                    email_match = csv_email and csv_email in page_text_lower
-                    firm_match = not email_match and csv_firm_name and csv_firm_name.lower() in page_text_lower
-
-                    if email_match or firm_match:
-                        status['log'].append(f"    -> Match FOUND on profile: {link}")
+                    page_text = driver.find_element(By.TAG_NAME, 'body').text.lower()
+                    is_match, confidence = get_match_confidence(first_name_match, last_name_match, csv_email, page_text)
+                    if is_match:
+                        status['log'].append("    -> Match CONFIRMED.")
                         match_found = True
+                        result_data.update(confidence)
                         result_data['Profile Link'] = link
-                        result_data['Firmname match'] = 'Yes' if firm_match else 'No'
-                        
-                        try:
-                            status_xpath = "//table//tbody/tr[td/strong[text()='Present']]/td[2]"
-                            result_data['Verified Status'] = driver.find_element(By.XPATH, status_xpath).text.strip()
-                        except: result_data['Verified Status'] = 'Status Not Found'
-
                         try:
                             discipline_xpath = "//table//tbody/tr[td/strong[text()='Present']]/td[3]"
                             cell_html = driver.find_element(By.XPATH, discipline_xpath).get_attribute('innerHTML')
@@ -129,44 +175,22 @@ def run_verification_process(filepath):
                         break
                 
                 if not match_found:
-                    result_data['Verified Status'] = 'Match Not Found'
-
+                    status['log'].append(" -> No definitive match found, but status was recorded.")
+                    result_data['Discipline Found'] = 'Match Not Confirmed'
             except Exception as e:
-                status['log'].append(f" -> CRITICAL ERROR: {e}")
+                status['log'].append(f" -> CRITICAL ERROR during processing: {e}")
             
             status['results'].append(result_data)
-        
+
         driver.quit()
         status['log'].append("Verification process complete!")
-        output_df = pd.DataFrame(status['results'])
-        output_df.to_csv('Verification_Results.csv', index=False)
-        status['log'].append("Results saved to 'Verification_Results.csv'")
 
     except Exception as e:
         status['log'].append(f"--- FATAL ERROR ---: {str(e)}")
     finally:
         status['is_running'] = False
 
-def setup_driver():
-    try:
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        service = ChromeService()
-        driver = webdriver.Chrome(service=service, options=options)
-        return driver
-    except Exception as e:
-        print(f"Error setting up driver: {e}")
-        return None
-
-def clean_name(first_name, last_name):
-    clean_first = re.split(r'[.\s]', first_name)[0]
-    clean_last = re.split(r'[.\s]', last_name)[-1]
-    return f"{clean_first} {clean_last}"
-
+# --- API Routes ---
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -180,7 +204,7 @@ def start_process():
     file = request.files.get('file')
     if not file or not file.filename.endswith('.csv'):
         return jsonify({'error': 'Invalid file. Please upload a CSV.'}), 400
-
+    
     status = {'is_running': True, 'progress': 0, 'total': 0, 'log': ["Starting verification..."], 'results': []}
     
     filepath = "uploaded_file.csv"
@@ -193,11 +217,3 @@ def start_process():
 @app.route('/status')
 def get_status():
     return jsonify(status)
-
-@app.route('/stop', methods=['POST'])
-def stop_process():
-    global status
-    if status['is_running']:
-        status['is_running'] = False
-        return jsonify({'message': 'Stop signal sent.'})
-    return jsonify({'error': 'No process is running.'})
