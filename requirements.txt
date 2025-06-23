@@ -1,5 +1,5 @@
-flask
-gunicorn
+streamlit
 pandas
 selenium
 webdriver-manager
+google-generativeai
